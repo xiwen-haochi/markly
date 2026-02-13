@@ -1108,6 +1108,49 @@ async function doExport() {
   try {
     const all = await localGetAll();
     if (all.length === 0) return alert('没有数据可导出');
+
+    // Netscape Bookmark File Format（兼容 Chrome / Edge 导入）
+    let html = `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<!-- This is an automatically generated file.
+     It will be read and overwritten.
+     DO NOT EDIT! -->
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+    <DT><H3 ADD_DATE="${Math.floor(Date.now() / 1000)}" LAST_MODIFIED="${Math.floor(Date.now() / 1000)}">Markly 收藏</H3>
+    <DL><p>
+`;
+
+    all.forEach(b => {
+      const addDate = b.created_at ? Math.floor(new Date(b.created_at).getTime() / 1000) : Math.floor(Date.now() / 1000);
+      const title = b.name || b.title || b.url || '';
+      // 将标签和摘要存入 TAGS 和 SHORTCUTURL 属性便于回导
+      const tags = [b.tags, b.aiTags].filter(Boolean).join(',');
+      const tagsAttr = tags ? ` TAGS="${escAttr(tags)}"` : '';
+      // 摘要放到 <DD> 中（Netscape 格式支持）
+      html += `        <DT><A HREF="${escAttr(b.url || '')}" ADD_DATE="${addDate}"${tagsAttr}>${escHtml(title)}</A>\n`;
+      if (b.summary) {
+        html += `        <DD>${escHtml(b.summary)}\n`;
+      }
+    });
+
+    html += `    </DL><p>
+</DL><p>
+`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    downloadBlob(blob, `markly_bookmarks_${formatDate(new Date())}.html`);
+  } catch (err) {
+    alert('导出失败: ' + err.message);
+  }
+}
+
+// 导出 CSV（备用，包含完整字段）
+async function doExportCSV() {
+  try {
+    const all = await localGetAll();
+    if (all.length === 0) return alert('没有数据可导出');
     const headers = ['名称', '标题', '链接', '标签', '智能标签', '摘要', '创建时间', '更新时间'];
     const rows = all.map(b => [
       b.name || '', b.title || '', b.url || '',
@@ -1118,7 +1161,7 @@ async function doExport() {
       .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
       .join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-    downloadBlob(blob, `链接收藏_${formatDate(new Date())}.csv`);
+    downloadBlob(blob, `markly_bookmarks_${formatDate(new Date())}.csv`);
   } catch (err) {
     alert('导出失败: ' + err.message);
   }
@@ -1141,48 +1184,128 @@ async function doImport(e) {
 
   try {
     const text = await file.text();
-    const lines = parseCSV(text);
-    if (lines.length < 2) throw new Error('文件为空或格式不正确');
+    const isHTML = file.name.toLowerCase().endsWith('.html') ||
+                   file.name.toLowerCase().endsWith('.htm') ||
+                   text.trimStart().startsWith('<!DOCTYPE NETSCAPE-Bookmark-file-1') ||
+                   text.trimStart().startsWith('<!DOCTYPE netscape-bookmark-file-1') ||
+                   (text.includes('<DL>') && text.includes('<DT>'));
 
-    // 查找列索引（支持中英文表头）
-    const header = lines[0].map(h => h.trim().toLowerCase());
-    const colMap = {
-      name:       findCol(header, ['名称', 'name', '自定义名称']),
-      title:      findCol(header, ['标题', 'title', '页面标题']),
-      url:        findCol(header, ['链接', 'url', '网址', '链接地址']),
-      tags:       findCol(header, ['标签', 'tags', 'tag']),
-      aiTags:     findCol(header, ['智能标签', 'aitags', 'ai_tags', 'ai标签']),
-      summary:    findCol(header, ['摘要', 'summary', '内容摘要', '描述']),
-      created_at: findCol(header, ['创建时间', 'created_at', 'createdat']),
-      updated_at: findCol(header, ['更新时间', 'updated_at', 'updatedat']),
-    };
-
-    if (colMap.url === -1) throw new Error('未找到链接/URL 列');
-
-    let imported = 0;
-    for (let i = 1; i < lines.length; i++) {
-      const row = lines[i];
-      const url = (row[colMap.url] || '').trim();
-      if (!url) continue;
-      await localAdd({
-        url,
-        name:       colMap.name >= 0 ? (row[colMap.name] || '').trim() : '',
-        title:      colMap.title >= 0 ? (row[colMap.title] || '').trim() : '',
-        tags:       colMap.tags >= 0 ? (row[colMap.tags] || '').trim() : '',
-        aiTags:     colMap.aiTags >= 0 ? (row[colMap.aiTags] || '').trim() : '',
-        summary:    colMap.summary >= 0 ? (row[colMap.summary] || '').trim() : '',
-        created_at: colMap.created_at >= 0 ? (row[colMap.created_at] || '').trim() : '',
-        updated_at: colMap.updated_at >= 0 ? (row[colMap.updated_at] || '').trim() : '',
-      });
-      imported++;
+    if (isHTML) {
+      await importFromBookmarkHTML(text);
+    } else {
+      await importFromCSV(text);
     }
-
-    alert(`导入成功：${imported} 条记录`);
-    loadBookmarks();
-    loadAllTags();
   } catch (err) {
     alert('导入失败: ' + err.message);
   }
+}
+
+// 导入浏览器书签 HTML（Netscape Bookmark 格式）
+async function importFromBookmarkHTML(html) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const links = doc.querySelectorAll('A');
+
+  if (links.length === 0) throw new Error('未找到书签链接');
+
+  let imported = 0;
+  for (const a of links) {
+    const url = (a.getAttribute('HREF') || a.getAttribute('href') || '').trim();
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) continue;
+
+    const title = (a.textContent || '').trim();
+    const addDate = a.getAttribute('ADD_DATE') || a.getAttribute('add_date') || '';
+    const tagsAttr = a.getAttribute('TAGS') || a.getAttribute('tags') || '';
+
+    // <DD> 紧跟在 <DT> 后面，包含描述
+    let summary = '';
+    const dt = a.closest('DT') || a.parentElement;
+    if (dt && dt.nextElementSibling && dt.nextElementSibling.tagName === 'DD') {
+      summary = (dt.nextElementSibling.textContent || '').trim();
+    }
+
+    // 解析文件夹路径作为标签
+    const folderTags = [];
+    let parent = a.closest('DL');
+    while (parent) {
+      const prev = parent.previousElementSibling;
+      if (prev && (prev.tagName === 'H3' || prev.tagName === 'H1')) {
+        const folderName = (prev.textContent || '').trim();
+        if (folderName && folderName !== 'Bookmarks' && folderName !== 'Bookmarks bar' &&
+            folderName !== '书签栏' && folderName !== '其他书签' && folderName !== 'Other bookmarks') {
+          folderTags.unshift(folderName);
+        }
+      }
+      parent = parent.parentElement ? parent.parentElement.closest('DL') : null;
+    }
+
+    // 合并 TAGS 属性和文件夹标签
+    const allTags = [...new Set([
+      ...tagsAttr.split(',').map(t => t.trim()).filter(Boolean),
+      ...folderTags,
+    ])].join(',');
+
+    const created = addDate ? new Date(parseInt(addDate) * 1000).toISOString() : new Date().toISOString();
+
+    await localAdd({
+      url,
+      name: '',
+      title,
+      tags: allTags,
+      aiTags: '',
+      summary,
+      created_at: created,
+      updated_at: created,
+    });
+    imported++;
+  }
+
+  alert(`导入成功：从浏览器书签导入 ${imported} 条记录`);
+  loadBookmarks();
+  loadAllTags();
+}
+
+// 导入 CSV
+async function importFromCSV(text) {
+  const lines = parseCSV(text);
+  if (lines.length < 2) throw new Error('文件为空或格式不正确');
+
+  // 查找列索引（支持中英文表头）
+  const header = lines[0].map(h => h.trim().toLowerCase());
+  const colMap = {
+    name:       findCol(header, ['名称', 'name', '自定义名称']),
+    title:      findCol(header, ['标题', 'title', '页面标题']),
+    url:        findCol(header, ['链接', 'url', '网址', '链接地址']),
+    tags:       findCol(header, ['标签', 'tags', 'tag']),
+    aiTags:     findCol(header, ['智能标签', 'aitags', 'ai_tags', 'ai标签']),
+    summary:    findCol(header, ['摘要', 'summary', '内容摘要', '描述']),
+    created_at: findCol(header, ['创建时间', 'created_at', 'createdat']),
+    updated_at: findCol(header, ['更新时间', 'updated_at', 'updatedat']),
+  };
+
+  if (colMap.url === -1) throw new Error('未找到链接/URL 列');
+
+  let imported = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i];
+    const url = (row[colMap.url] || '').trim();
+    if (!url) continue;
+    await localAdd({
+      url,
+      name:       colMap.name >= 0 ? (row[colMap.name] || '').trim() : '',
+      title:      colMap.title >= 0 ? (row[colMap.title] || '').trim() : '',
+      tags:       colMap.tags >= 0 ? (row[colMap.tags] || '').trim() : '',
+      aiTags:     colMap.aiTags >= 0 ? (row[colMap.aiTags] || '').trim() : '',
+      summary:    colMap.summary >= 0 ? (row[colMap.summary] || '').trim() : '',
+      created_at: colMap.created_at >= 0 ? (row[colMap.created_at] || '').trim() : '',
+      updated_at: colMap.updated_at >= 0 ? (row[colMap.updated_at] || '').trim() : '',
+    });
+    imported++;
+  }
+
+  alert(`导入成功：${imported} 条记录`);
+  loadBookmarks();
+  loadAllTags();
 }
 
 function findCol(header, names) {
@@ -1254,4 +1377,9 @@ function escHtml(str) {
 
 function formatDate(d) {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function escAttr(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
