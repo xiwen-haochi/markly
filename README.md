@@ -6,10 +6,6 @@
 
 一个纯本地的智能书签管理浏览器扩展，支持 AI 内容提取，数据完全属于你。
 
-[![Chrome](https://img.shields.io/badge/Chrome-Manifest_V3-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/)
-[![Edge](https://img.shields.io/badge/Edge-Compatible-0078D7?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.0-purple.svg)]()
 
 </div>
 

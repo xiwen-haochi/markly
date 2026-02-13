@@ -11,7 +11,7 @@ let state = {
   currentTags: [],
   currentAiTags: [],
   sugHighlight: -1,
-  aiConfig: { apiUrl: '', apiKey: '', model: '', prompt: '', enableImages: false },
+  aiConfig: { apiUrl: '', apiKey: '', model: '', prompt: '', enableImages: false, outputLang: '' },
   totalTokens: 0,
   currentTab: null,
   pageHTML: null,
@@ -679,6 +679,7 @@ function showSettingsPanel() {
   $('#ai-model').value = state.aiConfig.model || '';
   $('#ai-prompt').value = state.aiConfig.prompt || '';
   $('#ai-enable-images').checked = !!state.aiConfig.enableImages;
+  $('#ai-output-lang').value = state.aiConfig.outputLang || '';
   // 更新 token 用量显示
   const tokenEl = $('#ai-token-usage');
   if (tokenEl) {
@@ -699,6 +700,7 @@ function saveAIConfig() {
     model: $('#ai-model').value.trim(),
     prompt: $('#ai-prompt').value.trim(),
     enableImages: $('#ai-enable-images').checked,
+    outputLang: $('#ai-output-lang').value.trim(),
   };
   try { chrome.storage.local.set({ aiConfig: state.aiConfig }); } catch {}
   updateAIButton();
@@ -727,7 +729,7 @@ function updateAIButton() {
 // ==================== AI 提取（直接调用 API） ====================
 
 async function doFetchAI() {
-  const { apiUrl, apiKey, model, prompt: customPrompt, enableImages } = state.aiConfig;
+  const { apiUrl, apiKey, model, prompt: customPrompt, enableImages, outputLang } = state.aiConfig;
   if (!apiUrl || !apiKey || !model) {
     showAddMsg('请先在设置中配置 AI 参数', 'error');
     showSettingsPanel();
@@ -761,10 +763,12 @@ async function doFetchAI() {
     }
 
     // 第三步：构建 AI 请求
+    const langNote = outputLang ? `\n重要：无论原文是什么语言，摘要和标签都必须使用「${outputLang}」输出。\n` : '';
     const systemPrompt = customPrompt || (
       '你是一个网页内容分析助手。请根据以下网页内容' + (imageUrls.length ? '和图片' : '') + '，生成：\n' +
-      '1. 一段简洁的中文摘要（100-300字）\n' +
-      '2. 5-20个精准的分类标签（用逗号分隔，数量视内容丰富度而定）\n\n' +
+      '1. 一段简洁的摘要（100-300字）\n' +
+      '2. 5-20个精准的分类标签（用逗号分隔，数量视内容丰富度而定）\n' +
+      langNote + '\n' +
       '请严格按以下 JSON 格式返回（不要包含 markdown 代码块标记）：\n' +
       '{"summary": "摘要内容", "tags": "标签1,标签2,...,标签N"}\n'
     );

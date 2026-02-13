@@ -104,6 +104,10 @@
           <div class="input-group">
             <textarea id="ai-prompt" placeholder="自定义提示词（可选，留空使用默认）" rows="3"></textarea>
           </div>
+          <div class="input-group">
+            <input type="text" id="ai-output-lang" placeholder="留空则跟随原文语言，如填 中文 则强制翻译" />
+          </div>
+          <p class="setting-hint" style="margin-top:-4px;margin-bottom:8px;">AI 提取的摘要和标签将翻译为该语言输出，留空默认中文</p>
           <label class="setting-toggle">
             <input type="checkbox" id="ai-enable-images" />
             <span class="toggle-text">支持图片分析（需模型支持视觉）</span>
