@@ -15,6 +15,10 @@ let state = {
   totalTokens: 0,
   currentTab: null,
   pageHTML: null,
+  viewMode: 'card',       // 'card' | 'compact'
+  theme: 'auto',          // 'auto' | 'light' | 'dark'
+  searchKeyword: '',      // 当前搜索关键词
+  linkStatus: {},         // { url: 'ok' | 'dead' }
 };
 
 // ===== DOM =====
@@ -23,13 +27,17 @@ const $$ = (sel) => document.querySelectorAll(sel);
 
 // ===== 初始化 =====
 document.addEventListener('DOMContentLoaded', async () => {
-  // 恢复 AI 配置
+  // 恢复 AI 配置 & 主题 & 视图模式
   try {
-    const data = await chrome.storage.local.get(['aiConfig', 'totalTokens']);
+    const data = await chrome.storage.local.get(['aiConfig', 'totalTokens', 'theme', 'viewMode']);
     if (data.aiConfig) state.aiConfig = { ...state.aiConfig, ...data.aiConfig };
     if (data.totalTokens) state.totalTokens = data.totalTokens;
+    if (data.theme) state.theme = data.theme;
+    if (data.viewMode) state.viewMode = data.viewMode;
   } catch {}
 
+  applyTheme();
+  applyViewMode();
   loadBookmarks();
   loadAllTags();
   updateAIButton();
@@ -176,7 +184,9 @@ function bindEvents() {
       const view = btn.dataset.view;
       $('#list-view').style.display = view === 'list' ? 'block' : 'none';
       $('#tags-view').style.display = view === 'tags' ? 'block' : 'none';
+      $('#readlater-view').style.display = view === 'readlater' ? 'block' : 'none';
       if (view === 'tags') loadTagGroups();
+      if (view === 'readlater') loadReadLater();
     };
   });
 
@@ -212,6 +222,23 @@ function bindEvents() {
   $('#btn-export').onclick = doExport;
   $('#btn-import').onclick = () => $('#import-file').click();
   $('#import-file').onchange = doImport;
+
+  // 视图模式切换
+  $('#btn-view-card').onclick = () => { state.viewMode = 'card'; applyViewMode(); saveViewMode(); };
+  $('#btn-view-compact').onclick = () => { state.viewMode = 'compact'; applyViewMode(); saveViewMode(); };
+
+  // 失效链接检测
+  $('#btn-check-links').onclick = doCheckLinks;
+
+  // 主题切换
+  const themeSelect = $('#theme-select');
+  if (themeSelect) {
+    themeSelect.onchange = () => {
+      state.theme = themeSelect.value;
+      applyTheme();
+      try { chrome.storage.local.set({ theme: state.theme }); } catch {}
+    };
+  }
 }
 
 // ==================== 标签输入组件 ====================
@@ -680,6 +707,9 @@ function showSettingsPanel() {
   $('#ai-prompt').value = state.aiConfig.prompt || '';
   $('#ai-enable-images').checked = !!state.aiConfig.enableImages;
   $('#ai-output-lang').value = state.aiConfig.outputLang || '';
+  // 主题
+  const themeSelect = $('#theme-select');
+  if (themeSelect) themeSelect.value = state.theme || 'auto';
   // 更新 token 用量显示
   const tokenEl = $('#ai-token-usage');
   if (tokenEl) {
@@ -873,6 +903,8 @@ async function doSave() {
   try {
     await localAdd(bookmark);
     showAddMsg('已保存', 'success');
+    // 播放收藏成功的粒子特效
+    playSparkleEffect();
     clearAddForm();
     loadBookmarks();
     loadAllTags();
@@ -914,9 +946,12 @@ function showAddMsg(msg, type) {
 // ==================== 加载 & 渲染 ====================
 
 async function loadBookmarks(keyword) {
+  state.searchKeyword = keyword || '';
   const container = $('#results');
   try {
-    const bookmarks = await localSearch(keyword);
+    let bookmarks = await localSearch(keyword);
+    // 置顶排序：pinned 的排前面
+    bookmarks.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
 
     if (bookmarks.length === 0) {
       container.innerHTML = `
@@ -929,6 +964,7 @@ async function loadBookmarks(keyword) {
 
     container.innerHTML = '';
     bookmarks.forEach(b => container.appendChild(createBookmarkCard(b)));
+    setupDragAndDrop();
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><p>加载错误: ${escHtml(err.message)}</p></div>`;
   }
@@ -937,25 +973,49 @@ async function loadBookmarks(keyword) {
 function createBookmarkCard(b) {
   const card = document.createElement('div');
   card.className = 'bookmark-card';
+  card.dataset.id = b.id;
+  if (b.pinned) card.classList.add('is-pinned');
+  if (b.readLater && !b.readDone) card.classList.add('is-unread');
+  if (state.linkStatus[b.url] === 'dead') card.classList.add('link-dead');
+
   const tags = parseTags(b.tags);
   const aiTags = parseTags(b.aiTags);
   const displayName = b.name || b.title || b.url;
   const timeStr = b.updated_at ? new Date(b.updated_at).toLocaleString('zh-CN') : '';
+  const kw = state.searchKeyword;
+
+  // 链接状态标记
+  let linkBadge = '';
+  if (state.linkStatus[b.url] === 'dead') linkBadge = '<span class="link-status-badge dead">失效</span>';
+  else if (state.linkStatus[b.url] === 'ok') linkBadge = '<span class="link-status-badge ok">正常</span>';
+
+  // 置顶按钮
+  const pinClass = b.pinned ? 'pin-btn pinned' : 'pin-btn';
+  const pinIcon = b.pinned ? '📌' : '📍';
+
+  // 稍后阅读按钮
+  let rlBtnText = '稍后读';
+  let rlBtnClass = 'readlater-btn';
+  if (b.readLater && !b.readDone) { rlBtnText = '📖 待读'; rlBtnClass = 'readlater-btn is-unread'; }
+  else if (b.readDone) { rlBtnText = '✅ 已读'; rlBtnClass = 'readlater-btn'; }
 
   card.innerHTML = `
     <div class="card-header">
+      <span class="card-drag-handle" draggable="true" title="拖拽排序">⠿</span>
       <div style="flex:1;min-width:0;">
-        <div class="card-name">${escHtml(displayName)}</div>
-        ${b.title && b.name ? `<div class="card-title">${escHtml(b.title)}</div>` : ''}
+        <div class="card-name">${highlightText(escHtml(displayName), kw)}</div>
+        ${b.title && b.name ? `<div class="card-title">${highlightText(escHtml(b.title), kw)}</div>` : ''}
       </div>
+      <button class="${pinClass}" data-action="pin" title="置顶">${pinIcon}</button>
     </div>
-    <a class="card-url" href="${escHtml(b.url)}" target="_blank" rel="noopener">${escHtml(b.url)}</a>
-    ${b.summary ? `<div class="card-summary">${escHtml(b.summary)}</div>` : ''}
-    ${tags.length ? `<div class="card-tags">${tags.map(t => `<span class="card-tag">${escHtml(t)}</span>`).join('')}</div>` : ''}
-    ${aiTags.length ? `<div class="card-tags">${aiTags.map(t => `<span class="card-tag card-ai-tag">${escHtml(t)}</span>`).join('')}</div>` : ''}
+    <a class="card-url" href="${escHtml(b.url)}" target="_blank" rel="noopener">${highlightText(escHtml(b.url), kw)}</a>${linkBadge}
+    ${b.summary ? `<div class="card-summary">${highlightText(escHtml(b.summary), kw)}</div>` : ''}
+    ${tags.length ? `<div class="card-tags">${tags.map(t => `<span class="card-tag">${highlightText(escHtml(t), kw)}</span>`).join('')}</div>` : ''}
+    ${aiTags.length ? `<div class="card-tags">${aiTags.map(t => `<span class="card-tag card-ai-tag">${highlightText(escHtml(t), kw)}</span>`).join('')}</div>` : ''}
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <div class="card-meta">${timeStr}</div>
       <div class="card-actions">
+        <button class="${rlBtnClass}" data-action="readlater">${rlBtnText}</button>
         <button class="card-action-btn" data-action="edit" data-id="${b.id}">编辑</button>
         <button class="card-action-btn danger" data-action="delete" data-id="${b.id}">删除</button>
       </div>
@@ -963,6 +1023,8 @@ function createBookmarkCard(b) {
 
   card.querySelector('[data-action="delete"]').onclick = () => confirmDelete(b);
   card.querySelector('[data-action="edit"]').onclick = () => startEdit(b);
+  card.querySelector('[data-action="pin"]').onclick = () => togglePin(b);
+  card.querySelector('[data-action="readlater"]').onclick = () => toggleReadLater(b);
   return card;
 }
 
@@ -1019,6 +1081,11 @@ async function doUpdate(id) {
 function confirmDelete(b) {
   showConfirm('删除收藏', `确定删除「${b.name || b.title || b.url}」？此操作不可撤销。`, async () => {
     try {
+      // 找到卡片元素并播放碎裂特效
+      const card = document.querySelector(`.bookmark-card[data-id="${b.id}"]`);
+      if (card) {
+        await playShatterEffect(card);
+      }
       await localDelete(b.id);
       loadBookmarks($('#search-input').value);
       loadAllTags();
@@ -1361,6 +1428,220 @@ function parseCSV(text) {
   return lines;
 }
 
+// ==================== 深色模式 ====================
+
+function applyTheme() {
+  const html = document.documentElement;
+  if (state.theme === 'dark') {
+    html.setAttribute('data-theme', 'dark');
+  } else if (state.theme === 'light') {
+    html.setAttribute('data-theme', 'light');
+  } else {
+    // auto: 跟随系统
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    html.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+  }
+}
+// 监听系统主题变化
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (state.theme === 'auto') applyTheme();
+});
+
+// ==================== 视图模式 ====================
+
+function applyViewMode() {
+  const results = $('#results');
+  const cardBtn = $('#btn-view-card');
+  const compactBtn = $('#btn-view-compact');
+  if (state.viewMode === 'compact') {
+    results.classList.add('compact-mode');
+    cardBtn.classList.remove('active');
+    compactBtn.classList.add('active');
+  } else {
+    results.classList.remove('compact-mode');
+    cardBtn.classList.add('active');
+    compactBtn.classList.remove('active');
+  }
+}
+function saveViewMode() {
+  applyViewMode();
+  try { chrome.storage.local.set({ viewMode: state.viewMode }); } catch {}
+}
+
+// ==================== 搜索高亮 ====================
+
+function highlightText(htmlStr, keyword) {
+  if (!keyword) return htmlStr;
+  const kw = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${kw})`, 'gi');
+  return htmlStr.replace(regex, '<span class="search-highlight">$1</span>');
+}
+
+// ==================== 置顶 ====================
+
+async function togglePin(b) {
+  try {
+    b.pinned = !b.pinned;
+    await localUpdate(b.id, { pinned: b.pinned });
+    loadBookmarks(state.searchKeyword);
+  } catch (err) {
+    console.warn('[Markly] togglePin error:', err);
+  }
+}
+
+// ==================== 拖拽排序 ====================
+
+function setupDragAndDrop() {
+  const container = $('#results');
+  let draggedCard = null;
+
+  container.querySelectorAll('.card-drag-handle').forEach(handle => {
+    const card = handle.closest('.bookmark-card');
+    handle.ondragstart = (e) => {
+      draggedCard = card;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.id);
+    };
+    handle.ondragend = () => {
+      card.classList.remove('dragging');
+      container.querySelectorAll('.drag-over').forEach(c => c.classList.remove('drag-over'));
+      draggedCard = null;
+    };
+  });
+
+  container.querySelectorAll('.bookmark-card').forEach(card => {
+    card.ondragover = (e) => {
+      e.preventDefault();
+      if (draggedCard && draggedCard !== card) {
+        card.classList.add('drag-over');
+      }
+    };
+    card.ondragleave = () => card.classList.remove('drag-over');
+    card.ondrop = async (e) => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      if (!draggedCard || draggedCard === card) return;
+
+      const fromId = parseInt(draggedCard.dataset.id);
+      const toId = parseInt(card.dataset.id);
+      await reorderBookmarks(fromId, toId);
+    };
+  });
+}
+
+async function reorderBookmarks(fromId, toId) {
+  try {
+    const all = await localGetAll();
+    all.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+
+    const fromIdx = all.findIndex(b => b.id === fromId);
+    const toIdx = all.findIndex(b => b.id === toId);
+    if (fromIdx < 0 || toIdx < 0) return;
+
+    // 交换 sortOrder
+    const now = Date.now();
+    // 给目标位置附近的时间戳来实现排序
+    const toItem = all[toIdx];
+    await localUpdate(fromId, { updated_at: toItem.updated_at || new Date().toISOString() });
+
+    loadBookmarks(state.searchKeyword);
+  } catch (err) {
+    console.warn('[Markly] reorder error:', err);
+  }
+}
+
+// ==================== 稍后阅读 ====================
+
+async function toggleReadLater(b) {
+  try {
+    if (b.readDone) {
+      // 已读 → 清除
+      b.readLater = false;
+      b.readDone = false;
+    } else if (b.readLater) {
+      // 待读 → 标记已读
+      b.readDone = true;
+    } else {
+      // 普通 → 标记待读
+      b.readLater = true;
+      b.readDone = false;
+    }
+    await localUpdate(b.id, { readLater: b.readLater, readDone: b.readDone });
+    loadBookmarks(state.searchKeyword);
+    // 如果在待读视图，刷新
+    if ($('#readlater-view').style.display !== 'none') loadReadLater();
+  } catch (err) {
+    console.warn('[Markly] toggleReadLater error:', err);
+  }
+}
+
+async function loadReadLater() {
+  const container = $('#readlater-results');
+  try {
+    const all = await localGetAll();
+    const unread = all.filter(b => b.readLater && !b.readDone);
+
+    if (unread.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p>🎉 没有待读内容<br>在书签卡片上点击「稍后读」添加</p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = '';
+    unread.forEach(b => container.appendChild(createBookmarkCard(b)));
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state"><p>加载错误: ${escHtml(err.message)}</p></div>`;
+  }
+}
+
+// ==================== 失效链接检测 ====================
+
+async function doCheckLinks() {
+  const btn = $('#btn-check-links');
+  const oldText = btn.textContent;
+  btn.textContent = '⏳ 检测中...';
+  btn.disabled = true;
+
+  try {
+    const all = await localGetAll();
+    const urls = all.map(b => b.url).filter(u => u && u.startsWith('http'));
+    let checked = 0;
+    let dead = 0;
+
+    // 分批检测，每批 5 个
+    for (let i = 0; i < urls.length; i += 5) {
+      const batch = urls.slice(i, i + 5);
+      const results = await Promise.allSettled(
+        batch.map(url =>
+          fetch(url, { method: 'HEAD', mode: 'no-cors', signal: AbortSignal.timeout(8000) })
+            .then(resp => ({ url, ok: resp.ok || resp.type === 'opaque' }))
+            .catch(() => ({ url, ok: false }))
+        )
+      );
+      results.forEach(r => {
+        if (r.status === 'fulfilled') {
+          state.linkStatus[r.value.url] = r.value.ok ? 'ok' : 'dead';
+          if (!r.value.ok) dead++;
+        }
+      });
+      checked += batch.length;
+      btn.textContent = `⏳ ${checked}/${urls.length}`;
+    }
+
+    loadBookmarks(state.searchKeyword);
+    btn.textContent = `✅ ${dead} 个失效`;
+    setTimeout(() => { btn.textContent = oldText; }, 3000);
+  } catch (err) {
+    btn.textContent = '❌ 检测失败';
+    setTimeout(() => { btn.textContent = oldText; }, 3000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ==================== 工具函数 ====================
 
 function parseTags(tags) {
@@ -1382,4 +1663,137 @@ function formatDate(d) {
 function escAttr(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ==================== 删除碎裂特效 ====================
+
+function playShatterEffect(card) {
+  return new Promise((resolve) => {
+    const rect = card.getBoundingClientRect();
+    const scrollX = window.scrollX || 0;
+    const scrollY = window.scrollY || 0;
+
+    // 隐藏原卡片
+    card.style.visibility = 'hidden';
+
+    // 创建碎片容器
+    const container = document.createElement('div');
+    container.style.cssText = `position:absolute;top:${rect.top + scrollY}px;left:${rect.left + scrollX}px;width:${rect.width}px;height:${rect.height}px;z-index:9999;pointer-events:none;overflow:visible;`;
+    document.body.appendChild(container);
+
+    const cols = 5, rows = 4;
+    const pieceW = rect.width / cols;
+    const pieceH = rect.height / rows;
+    const fragments = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const frag = document.createElement('div');
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+        const fx = c * pieceW;
+        const fy = r * pieceH;
+        const dx = (fx + pieceW / 2 - centerX) * (2 + Math.random() * 3);
+        const dy = (fy + pieceH / 2 - centerY) * (2 + Math.random() * 3) - 40;
+        const rot = (Math.random() - 0.5) * 720;
+
+        frag.style.cssText = `
+          position:absolute;left:${fx}px;top:${fy}px;
+          width:${pieceW}px;height:${pieceH}px;
+          background:var(--card-bg, #fff);
+          backdrop-filter:blur(8px);
+          border-radius:${Math.random() * 4 + 1}px;
+          box-shadow:0 1px 4px rgba(0,0,0,0.1);
+          opacity:1;
+          transition:all 0.6s cubic-bezier(0.25,0.46,0.45,0.94);
+          will-change:transform,opacity;
+        `;
+        container.appendChild(frag);
+        fragments.push({ el: frag, dx, dy, rot });
+      }
+    }
+
+    // 触发碎片飞散动画
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        fragments.forEach(({ el, dx, dy, rot }) => {
+          el.style.transform = `translate(${dx}px, ${dy}px) rotate(${rot}deg) scale(0.3)`;
+          el.style.opacity = '0';
+        });
+      });
+    });
+
+    setTimeout(() => {
+      container.remove();
+      resolve();
+    }, 650);
+  });
+}
+
+// ==================== 保存粒子特效 ====================
+
+function playSparkleEffect() {
+  const saveBtn = $('#btn-save');
+  if (!saveBtn) return;
+
+  const btnRect = saveBtn.getBoundingClientRect();
+  const cx = btnRect.left + btnRect.width / 2;
+  const cy = btnRect.top + btnRect.height / 2;
+
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;inset:0;z-index:9999;pointer-events:none;overflow:hidden;';
+  document.body.appendChild(container);
+
+  const colors = ['#3AAFA5', '#5AC8FA', '#34C759', '#FFD60A', '#FF9500', '#FF6B9D', '#7B61FF'];
+  const shapes = ['circle', 'star', 'diamond'];
+  const count = 30;
+
+  for (let i = 0; i < count; i++) {
+    const spark = document.createElement('div');
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const shape = shapes[Math.floor(Math.random() * shapes.length)];
+    const size = Math.random() * 8 + 4;
+    const angle = (Math.PI * 2 * i / count) + (Math.random() - 0.5) * 0.8;
+    const dist = 50 + Math.random() * 100;
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist - 30;
+    const delay = Math.random() * 120;
+
+    let shapeCSS = '';
+    if (shape === 'circle') {
+      shapeCSS = `border-radius:50%;`;
+    } else if (shape === 'star') {
+      shapeCSS = `border-radius:1px;transform:rotate(45deg);`;
+    } else {
+      shapeCSS = `border-radius:2px;transform:rotate(45deg);`;
+    }
+
+    spark.style.cssText = `
+      position:fixed;left:${cx - size / 2}px;top:${cy - size / 2}px;
+      width:${size}px;height:${size}px;
+      background:${color};
+      ${shapeCSS}
+      opacity:1;box-shadow:0 0 ${size}px ${color}80;
+      transition:all 0.7s cubic-bezier(0.22,0.61,0.36,1);
+      transition-delay:${delay}ms;
+      will-change:transform,opacity;
+    `;
+    container.appendChild(spark);
+  }
+
+  // 触发粒子扩散
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      container.querySelectorAll('div').forEach((spark, i) => {
+        const angle = (Math.PI * 2 * i / count) + (Math.random() - 0.5) * 0.8;
+        const dist = 50 + Math.random() * 100;
+        const dx = Math.cos(angle) * dist;
+        const dy = Math.sin(angle) * dist - 30;
+        spark.style.transform = `translate(${dx}px, ${dy}px) rotate(${Math.random() * 360}deg) scale(0.2)`;
+        spark.style.opacity = '0';
+      });
+    });
+  });
+
+  setTimeout(() => container.remove(), 900);
 }

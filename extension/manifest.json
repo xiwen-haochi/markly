@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Markly - 智链收藏",
   "description": "Smart Bookmark, Local First. 纯本地智能书签管理，支持 AI 摘要提取与智能标签",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "permissions": ["activeTab", "storage", "scripting", "tabs"],
   "host_permissions": ["<all_urls>"],
   "action": {

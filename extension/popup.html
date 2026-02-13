@@ -40,6 +40,7 @@
     <!-- 视图切换 -->
     <div class="segmented-control">
       <button class="seg-btn active" data-view="list">全部</button>
+      <button class="seg-btn" data-view="readlater">待读</button>
       <button class="seg-btn" data-view="tags">标签分组</button>
     </div>
 
@@ -73,7 +74,23 @@
 
     <!-- 列表视图 -->
     <div id="list-view" class="view-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="display:flex;gap:4px;align-items:center;">
+          <button id="btn-view-card" class="view-mode-btn active" title="卡片视图">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="1" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.3"/><rect x="1" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9" width="6" height="6" rx="1.5" stroke="currentColor" stroke-width="1.3"/></svg>
+          </button>
+          <button id="btn-view-compact" class="view-mode-btn" title="紧凑列表">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 3h14M1 7h14M1 11h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <button id="btn-check-links" class="btn-check-links" title="检测失效链接">🔗 检测链接</button>
+      </div>
       <div id="results" class="results-list"></div>
+    </div>
+
+    <!-- 待读视图 -->
+    <div id="readlater-view" class="view-container" style="display:none;">
+      <div id="readlater-results" class="results-list"></div>
     </div>
 
     <!-- 标签分组视图 -->
@@ -116,6 +133,17 @@
           <button id="btn-save-ai" class="btn-apple btn-filled btn-sm" style="width:100%;margin-top:8px;">保存 AI 配置</button>
           <div id="ai-token-usage" class="token-usage"></div>
           <div id="ai-config-msg" class="toast" style="margin-top:8px;"></div>
+        </div>
+        <div class="setting-section" style="margin-top:16px;">
+          <div class="setting-label">外观</div>
+          <div class="theme-toggle">
+            <span class="toggle-text">主题模式</span>
+            <select id="theme-select" class="theme-select">
+              <option value="auto">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </div>
         </div>
         <div class="setting-section" style="margin-top:16px;">
           <div class="setting-label">说明</div>
