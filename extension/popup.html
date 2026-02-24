@@ -139,6 +139,27 @@
           <div id="ai-config-msg" class="toast" style="margin-top:8px;"></div>
         </div>
         <div class="setting-section" style="margin-top:16px;">
+          <div class="setting-label">☔ Raindrop.io 同步</div>
+          <span id="raindrop-status" class="raindrop-status disconnected">⚠️ 未配置</span>
+          <p class="setting-hint">关联 Raindrop.io 后可双向同步书签。<br>在 <a href="https://app.raindrop.io/settings/integrations" target="_blank" style="color:var(--primary);">Raindrop 设置 → 整合方式</a> 中创建应用并获取Token。</p>
+          <div class="input-group">
+            <input type="password" id="raindrop-token" placeholder="Raindrop Test Token" />
+          </div>
+          <div class="input-group">
+            <input type="number" id="raindrop-collection" placeholder="集合 ID（0 = 全部，可留空）" />
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="raindrop-sync-on-save" />
+            <span class="toggle-text">保存书签时自动同步到 Raindrop</span>
+          </label>
+          <p class="setting-hint" style="margin-top:2px;margin-bottom:8px;">开启后每次在 Markly 保存新书签，会自动推送到 Raindrop.io</p>
+          <div style="display:flex;gap:8px;">
+            <button id="btn-save-raindrop" class="btn-apple btn-filled btn-sm" style="flex:1;">保存配置</button>
+            <button id="btn-pull-raindrop" class="btn-apple btn-tinted btn-sm" style="flex:1;">🔄 从 Raindrop 拉取</button>
+          </div>
+          <div id="raindrop-config-msg" class="toast" style="margin-top:8px;"></div>
+        </div>
+        <div class="setting-section" style="margin-top:16px;">
           <div class="setting-label">外观</div>
           <div class="theme-toggle">
             <span class="toggle-text">主题模式</span>

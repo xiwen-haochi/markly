@@ -1104,3 +1104,21 @@ body::-webkit-scrollbar-thumb { background: var(--gray3); border-radius: 2px; }
   gap: 4px;
   margin-left: 4px;
 }
+
+/* ===== Raindrop 状态 ===== */
+.raindrop-status {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+.raindrop-status.connected {
+  background: rgba(52,199,89,0.12);
+  color: var(--green);
+}
+.raindrop-status.disconnected {
+  background: rgba(255,149,0,0.12);
+  color: var(--orange);
+}

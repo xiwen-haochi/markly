@@ -12,6 +12,7 @@ let state = {
   currentAiTags: [],
   sugHighlight: -1,
   aiConfig: { apiUrl: '', apiKey: '', model: '', prompt: '', enableImages: false, outputLang: '' },
+  raindropConfig: { token: '', syncOnSave: false, collection: 0 },
   totalTokens: 0,
   currentTab: null,
   pageHTML: null,
@@ -30,8 +31,9 @@ const $$ = (sel) => document.querySelectorAll(sel);
 document.addEventListener('DOMContentLoaded', async () => {
   // 恢复 AI 配置 & 主题 & 视图模式
   try {
-    const data = await chrome.storage.local.get(['aiConfig', 'totalTokens', 'theme', 'viewMode', 'sortOrder']);
+    const data = await chrome.storage.local.get(['aiConfig', 'totalTokens', 'theme', 'viewMode', 'sortOrder', 'raindropConfig']);
     if (data.aiConfig) state.aiConfig = { ...state.aiConfig, ...data.aiConfig };
+    if (data.raindropConfig) state.raindropConfig = { ...state.raindropConfig, ...data.raindropConfig };
     if (data.totalTokens) state.totalTokens = data.totalTokens;
     if (data.theme) state.theme = data.theme;
     if (data.viewMode) state.viewMode = data.viewMode;
@@ -198,9 +200,34 @@ function bindEvents() {
     const wasCollapsed = panel.classList.contains('collapsed');
     panel.classList.toggle('collapsed');
     panel.classList.toggle('expanded');
-    // 展开时自动提取当前页面基本信息（标题、标签）
+    // 展开时：如果当前 URL 已存在书签，回显已有数据；否则自动提取
     if (wasCollapsed) {
-      await autoExtractBasicInfo();
+      const currentUrl = $('#add-url').value.trim();
+      if (currentUrl) {
+        const allBookmarks = await localGetAll();
+        const existing = allBookmarks.find(b => b.url === currentUrl);
+        if (existing) {
+          // 回显已有书签数据，切换为更新模式
+          $('#add-name').value = existing.name || '';
+          $('#add-title').value = existing.title || '';
+          $('#add-summary').value = existing.summary || '';
+          state.currentTags = parseTags(existing.tags);
+          state.currentAiTags = parseTags(existing.aiTags);
+          renderTagPills();
+          renderAiTagPills();
+          const saveBtn = $('#btn-save');
+          saveBtn.textContent = '更新收藏';
+          saveBtn.onclick = async () => {
+            await doUpdate(existing.id);
+            saveBtn.textContent = '保存收藏';
+            saveBtn.onclick = doSave;
+          };
+        } else {
+          await autoExtractBasicInfo();
+        }
+      } else {
+        await autoExtractBasicInfo();
+      }
     }
   };
 
@@ -219,6 +246,8 @@ function bindEvents() {
   $('#btn-settings').onclick = showSettingsPanel;
   $('#btn-settings-back').onclick = hideSettingsPanel;
   $('#btn-save-ai').onclick = saveAIConfig;
+  $('#btn-save-raindrop').onclick = saveRaindropConfig;
+  $('#btn-pull-raindrop').onclick = pullFromRaindrop;
 
   // 导入导出
   $('#btn-export').onclick = doExport;
@@ -723,6 +752,11 @@ function showSettingsPanel() {
   // 主题
   const themeSelect = $('#theme-select');
   if (themeSelect) themeSelect.value = state.theme || 'auto';
+  // Raindrop 配置
+  $('#raindrop-token').value = state.raindropConfig.token || '';
+  $('#raindrop-sync-on-save').checked = !!state.raindropConfig.syncOnSave;
+  $('#raindrop-collection').value = state.raindropConfig.collection || 0;
+  updateRaindropStatus();
   // 更新 token 用量显示
   const tokenEl = $('#ai-token-usage');
   if (tokenEl) {
@@ -755,6 +789,207 @@ function showConfigMsg(msg, type) {
   el.textContent = msg;
   el.className = 'toast show ' + type;
   setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ==================== Raindrop.io 配置 ====================
+
+function saveRaindropConfig() {
+  state.raindropConfig = {
+    token: $('#raindrop-token').value.trim(),
+    syncOnSave: $('#raindrop-sync-on-save').checked,
+    collection: parseInt($('#raindrop-collection').value) || 0,
+  };
+  try { chrome.storage.local.set({ raindropConfig: state.raindropConfig }); } catch {}
+  updateRaindropStatus();
+  showRaindropMsg('Raindrop 配置已保存', 'success');
+}
+
+function showRaindropMsg(msg, type) {
+  const el = $('#raindrop-config-msg');
+  el.textContent = msg;
+  el.className = 'toast show ' + type;
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function updateRaindropStatus() {
+  const statusEl = $('#raindrop-status');
+  if (!statusEl) return;
+  if (state.raindropConfig.token) {
+    statusEl.textContent = '✅ 已配置';
+    statusEl.className = 'raindrop-status connected';
+  } else {
+    statusEl.textContent = '⚠️ 未配置';
+    statusEl.className = 'raindrop-status disconnected';
+  }
+}
+
+// ==================== Raindrop.io API ====================
+
+const RAINDROP_API = 'https://api.raindrop.io/rest/v1';
+
+function raindropHeaders() {
+  return {
+    'Authorization': `Bearer ${state.raindropConfig.token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function syncToRaindrop(bookmark) {
+  const tags = [...parseTags(bookmark.tags), ...parseTags(bookmark.aiTags)];
+  const body = {
+    link: bookmark.url,
+    title: bookmark.name || bookmark.title || '',
+    excerpt: bookmark.summary || '',
+    note: bookmark.summary || '',
+    tags: [...new Set(tags)],
+  };
+  const collectionId = state.raindropConfig.collection || 0;
+  if (collectionId) body.collection = { '$id': collectionId };
+
+  const resp = await fetch(`${RAINDROP_API}/raindrop`, {
+    method: 'POST',
+    headers: raindropHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Raindrop API ${resp.status}: ${err}`);
+  }
+  const result = await resp.json();
+  console.log('[Markly] synced to Raindrop:', bookmark.url);
+  // 保存 Raindrop ID 到本地书签
+  if (result.item && result.item._id) {
+    const all = await localGetAll();
+    const local = all.find(b => b.url === bookmark.url);
+    if (local) {
+      await localUpdate(local.id, { raindropId: result.item._id });
+    }
+  }
+  return result;
+}
+
+async function updateRaindropBookmark(raindropId, bookmark) {
+  const tags = [...parseTags(bookmark.tags), ...parseTags(bookmark.aiTags)];
+  const body = {
+    link: bookmark.url,
+    title: bookmark.name || bookmark.title || '',
+    excerpt: bookmark.summary || '',
+    note: bookmark.summary || '',
+    tags: [...new Set(tags)],
+  };
+  const resp = await fetch(`${RAINDROP_API}/raindrop/${raindropId}`, {
+    method: 'PUT',
+    headers: raindropHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Raindrop API ${resp.status}: ${err}`);
+  }
+  console.log('[Markly] updated Raindrop bookmark:', raindropId);
+  return resp.json();
+}
+
+async function pullFromRaindrop() {
+  const btn = $('#btn-pull-raindrop');
+  if (!state.raindropConfig.token) {
+    return showRaindropMsg('请先配置 Raindrop Token', 'error');
+  }
+
+  const oldText = btn.textContent;
+  btn.textContent = '⏳ 拉取中...';
+  btn.disabled = true;
+
+  try {
+    const collectionId = state.raindropConfig.collection || 0;
+    const perpage = 50;
+    let page = 0;
+    const raindropItems = [];
+
+    // 1. 拉取 Raindrop 全部书签
+    while (true) {
+      const resp = await fetch(
+        `${RAINDROP_API}/raindrops/${collectionId}?page=${page}&perpage=${perpage}&sort=-created`,
+        { headers: raindropHeaders() }
+      );
+      if (!resp.ok) {
+        const err = await resp.text();
+        throw new Error(`API ${resp.status}: ${err}`);
+      }
+      const data = await resp.json();
+      const items = data.items || [];
+      if (items.length === 0) break;
+      raindropItems.push(...items);
+      btn.textContent = `⏳ 已获取 ${raindropItems.length} 条...`;
+      if (items.length < perpage) break;
+      page++;
+    }
+
+    // 2. 构建 Raindrop URL 索引
+    const raindropByUrl = new Map();
+    for (const item of raindropItems) {
+      raindropByUrl.set(item.link, item);
+    }
+
+    // 3. 获取本地全部书签
+    const localAll = await localGetAll();
+    const localByUrl = new Map();
+    for (const b of localAll) {
+      localByUrl.set(b.url, b);
+    }
+
+    let imported = 0, updated = 0, deleted = 0;
+
+    // 4. 处理 Raindrop 书签：新增或覆盖本地
+    for (const item of raindropItems) {
+      const rdData = {
+        url: item.link,
+        title: item.title || '',
+        tags: (item.tags || []).join(','),
+        summary: item.note || item.excerpt || '',
+        raindropId: item._id,
+        created_at: item.created || new Date().toISOString(),
+        updated_at: item.lastUpdate || new Date().toISOString(),
+      };
+
+      const existing = localByUrl.get(item.link);
+      if (existing) {
+        // 以 Raindrop 为准覆盖内容字段，保留本地专属字段（pinned, readLater 等）
+        await localUpdate(existing.id, {
+          title: rdData.title,
+          tags: rdData.tags,
+          summary: rdData.summary,
+          raindropId: rdData.raindropId,
+          updated_at: rdData.updated_at,
+        });
+        updated++;
+      } else {
+        // 新增书签
+        await localAdd({ ...rdData, name: '', aiTags: '' });
+        imported++;
+      }
+    }
+
+    // 5. 删除本地存在但 Raindrop 中不存在的书签
+    for (const b of localAll) {
+      if (!raindropByUrl.has(b.url)) {
+        await localDelete(b.id);
+        deleted++;
+      }
+    }
+
+    loadBookmarks(state.searchKeyword);
+    loadAllTags();
+    showRaindropMsg(`拉取完成：新增 ${imported}，更新 ${updated}，删除 ${deleted}`, 'success');
+    btn.textContent = `✅ 同步完成`;
+    setTimeout(() => { btn.textContent = oldText; }, 3000);
+  } catch (err) {
+    showRaindropMsg('拉取失败: ' + err.message, 'error');
+    btn.textContent = '❌ 拉取失败';
+    setTimeout(() => { btn.textContent = oldText; }, 3000);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function updateAIButton() {
@@ -918,6 +1153,10 @@ async function doSave() {
     showAddMsg('已保存', 'success');
     // 播放收藏成功的粒子特效
     playSparkleEffect();
+    // 同步到 Raindrop（如果开启）
+    if (state.raindropConfig.token && state.raindropConfig.syncOnSave) {
+      syncToRaindrop(bookmark).catch(e => console.warn('[Markly] Raindrop sync failed:', e));
+    }
     clearAddForm();
     loadBookmarks();
     loadAllTags();
@@ -1085,11 +1324,27 @@ async function doUpdate(id) {
   if (!data.url) return showAddMsg('请输入链接地址', 'error');
 
   try {
-    await localUpdate(id, data);
-    showAddMsg('已更新', 'success');
+    const updatedItem = await localUpdate(id, data);
+    // 如果该书签存在于 Raindrop，同步修改到 Raindrop
+    if (updatedItem.raindropId && state.raindropConfig.token) {
+      try {
+        await updateRaindropBookmark(updatedItem.raindropId, updatedItem);
+        showAddMsg('已更新（已同步到 Raindrop）', 'success');
+      } catch (e) {
+        console.warn('[Markly] Raindrop sync failed:', e);
+        showAddMsg('已更新（Raindrop 同步失败）', 'success');
+      }
+    } else {
+      showAddMsg('已更新', 'success');
+    }
     clearAddForm();
     loadBookmarks();
     loadAllTags();
+    // 更新后自动收起面板
+    setTimeout(() => {
+      $('#add-panel').classList.add('collapsed');
+      $('#add-panel').classList.remove('expanded');
+    }, 500);
   } catch (err) {
     showAddMsg('更新错误: ' + err.message, 'error');
   }

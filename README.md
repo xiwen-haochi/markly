@@ -20,7 +20,7 @@
 | 特性 | 说明 |
 |:---|:---|
 | 🔒 **纯本地存储** | 数据保存在浏览器 IndexedDB，无需注册账号，不上传任何服务器 |
-| 📄 **智能提取** | 自动抓取页面标题、正文摘要、关键词标签|
+| 📄 **智能提取** | 自动抓取页面标题、正文摘要、关键词标签 |
 | 🤖 **AI 提取** | 接入 OpenAI / DeepSeek / Ollama 等 API |
 | 🖼️ **图片分析** | 可选开启视觉模型，提取页面关键图片辅助 AI 分析 |
 | 🔍 **全文搜索** | 名称、标题、URL、标签、智能标签、摘要——全字段联合搜索 |
@@ -28,6 +28,12 @@
 | 📊 **标签分组** | 按标签聚合浏览，快速发现同类收藏 |
 | 📥 **导入/导出** | 支持 Edge 和 Chrome 收藏夹的导入与导出，无痛切换，便于迁移和整合书签 |
 | 📈 **Token 追踪** | 实时显示每次 AI 调用消耗，累计用量统计 |
+| 🌧️ **Raindrop.io 同步** | 拉取时以 Raindrop 为准覆盖本地，本地编辑自动同步回 Raindrop，本地删除不影响云端 |
+| 🌙 **深色模式** | 支持浅色/深色主题切换，毛玻璃 + 天青色设计风格 |
+| 📋 **多视图** | 卡片/列表视图自由切换 |
+| 📌 **置顶与拖拽排序** | 支持书签置顶、拖拽排序、时间正/倒序 |
+| 📖 **稍后阅读** | 标记书签为“稍后阅读”，管理阅读进度 |
+| 🔗 **死链检测** | 自动检测书签链接是否失效 |
 
 
 ## 快速开始
@@ -72,6 +78,22 @@ git clone https://github.com/xiwen-haochi/markly.git
 
 > 🔐 API 密钥仅保存在浏览器本地 `chrome.storage.local`，绝不外传。
 
+### 配置 Raindrop.io 同步（可选）
+
+点击导航栏 ⚙ 设置按钮 → 找到 Raindrop.io 配置区域 → 填入以下信息 → 保存
+
+| 配置项 | 说明 |
+|:---|:---|
+| Test Token | 在 [Raindrop.io 设置](https://app.raindrop.io/settings/integrations) 中创建 |
+| Collection ID | 收藏集 ID，留空为全部书签（默认 0） |
+| 保存时同步 | 开启后新保存的书签自动推送到 Raindrop |
+
+**同步规则：**
+
+- **拉取**：Raindrop 为源，相同 URL 以 Raindrop 为准覆盖本地，Raindrop 中不存在的本地书签将被删除
+- **本地编辑**：修改已关联 Raindrop 的书签时，自动同步回 Raindrop
+- **本地删除**：仅删除本地数据，不影响 Raindrop 云端书签
+
 ## 项目结构
 
 ```
@@ -87,7 +109,7 @@ markly/
 └── README.md
 ```
 
-**技术栈：** 原生 JavaScript · IndexedDB · Chrome Manifest V3 · DOMParser · OpenAI API
+**技术栈：** 原生 JavaScript · IndexedDB · Chrome Manifest V3 · DOMParser · OpenAI API · Raindrop.io API
 
 ## 数据安全
 
