@@ -1,0 +1,19 @@
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Chrome Extension build artifacts
+*.crx
+*.pem
+
+# Logs
+*.log
+
+next.md
