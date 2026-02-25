@@ -171,6 +171,24 @@
           </div>
         </div>
         <div class="setting-section" style="margin-top:16px;">
+          <div class="setting-label">存储用量</div>
+          <p class="setting-hint">Markly 书签数据存储在浏览器 <strong>IndexedDB</strong>（无容量限制，取决于磁盘空间）；配置信息存储在 <strong>chrome.storage.local</strong>（上限 10 MB）。</p>
+          <div id="storage-info" class="storage-info">
+            <div class="storage-row">
+              <span class="storage-label">📚 IndexedDB（书签数据）</span>
+              <span id="storage-idb" class="storage-val">计算中…</span>
+            </div>
+            <div class="storage-row">
+              <span class="storage-label">⚙️ chrome.storage.local（配置）</span>
+              <span id="storage-local" class="storage-val">计算中…</span>
+            </div>
+            <div class="storage-row">
+              <span class="storage-label">🔖 书签总数</span>
+              <span id="storage-count" class="storage-val">–</span>
+            </div>
+          </div>
+        </div>
+        <div class="setting-section" style="margin-top:16px;">
           <div class="setting-label">说明</div>
           <p class="setting-hint">• 所有数据存储在浏览器本地，不上传任何服务器<br>• API 地址只需填写到 /v1 即可，系统会自动补全<br>• 字节示例：https://ark.cn-beijing.volces.com/api/v3<br>• 支持导入/导出 CSV 文件备份数据</p>
         </div>

@@ -741,6 +741,38 @@ async function doFetch() {
 
 // ==================== 设置面板 ====================
 
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+async function loadStorageInfo() {
+  // IndexedDB：遍历所有书签估算大小
+  try {
+    const all = await localGetAll();
+    const bytes = new TextEncoder().encode(JSON.stringify(all)).length;
+    const el = $('#storage-idb');
+    if (el) el.textContent = formatBytes(bytes);
+    const countEl = $('#storage-count');
+    if (countEl) countEl.textContent = all.length + ' 条';
+  } catch (e) {
+    const el = $('#storage-idb');
+    if (el) el.textContent = '获取失败';
+  }
+  // chrome.storage.local：使用 API 精确获取
+  try {
+    chrome.storage.local.getBytesInUse(null, (used) => {
+      const quota = chrome.storage.local.QUOTA_BYTES || 10 * 1024 * 1024;
+      const el = $('#storage-local');
+      if (el) el.textContent = `${formatBytes(used)} / ${formatBytes(quota)}`;
+    });
+  } catch (e) {
+    const el = $('#storage-local');
+    if (el) el.textContent = '获取失败';
+  }
+}
+
 function showSettingsPanel() {
   const panel = $('#settings-panel');
   $('#ai-api-url').value = state.aiConfig.apiUrl || '';
@@ -763,6 +795,8 @@ function showSettingsPanel() {
     const k = (state.totalTokens / 1000).toFixed(1);
     tokenEl.textContent = `累计使用: ${k}K tokens`;
   }
+  // 存储用量
+  loadStorageInfo();
   panel.style.display = 'block';
 }
 
